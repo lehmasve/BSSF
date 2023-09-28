@@ -3,3 +3,5 @@
 Archiv/
 .ipynb_checkpoints
 .vscode
+env/
+DWave.docx
