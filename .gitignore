@@ -1,6 +1,5 @@
 *.DS_Store
 *.json
-Archiv/
 .ipynb_checkpoints
 .vscode
 env/
