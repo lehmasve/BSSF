@@ -6,5 +6,7 @@ env/
 DWave.docx
 CSR/
 Results/Archiv/
-Results/Results.xlsx
 Plots/
+Code/Real_Data_Analysis_Eye_Full.R
+Results/Simulation/*.pkl
+Results/Application/*.pkl
