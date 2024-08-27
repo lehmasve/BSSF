@@ -64,7 +64,7 @@ def train_test_split(indices, train_size, x, y):
 
 ############## ---------------------------
 ### Function to generate results
-def run_results(N, x, y, train, cm_params, ran_st):
+def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
     """
     Function for real data analysis simulation.
     
@@ -95,9 +95,6 @@ def run_results(N, x, y, train, cm_params, ran_st):
     # Full Index
     indices = np.arange(0, x.shape[0])
 
-    ## Output lists
-    #output_pred, output_mse, output_bestk, output_weights, output_cfmodels = [], [], [], [], []
-
     # Initialize results dictionary
     results = {
         "predictions": [None] * N,
@@ -106,7 +103,9 @@ def run_results(N, x, y, train, cm_params, ran_st):
         "bssf_weights": [None] * N,
         "cf_models": [None] * N,
         "cf_descriptions": None,
-        "fmodel_names": fmodel_names
+        "fmodel_names": fmodel_names,
+        "bssf_timeout": bssf_timeout,
+        "bssf_alpha": bssf_alpha
     }
 
     ### Simulation replications
@@ -167,9 +166,9 @@ def run_results(N, x, y, train, cm_params, ran_st):
         pred_psgd, psgd_coef, psgd_k = psgd_cv(y_train, x_train, x_test, n_models, split_grid, size_grid, kfolds, n_jobs = 4)
 
         # BSSF
-        alpha = 1e9
+        alpha = bssf_alpha # 1e9
         vec_k = np.array([1, 2, 3, 4, 5])
-        timeout = 10.0
+        timeout = bssf_timeout # 10
         method = "gurobi"
         pred_bssf, bssf_weights, bssf_k = bssf_cv(target_train, cf_train, cf_test, alpha, vec_k, timeout, method, kfolds, ran_st = rep_ind)
 
@@ -184,13 +183,6 @@ def run_results(N, x, y, train, cm_params, ran_st):
         mse_psgd = mean_squared_error(y_test, pred_psgd)
         mse_bssf = mean_squared_error(y_test, pred_bssf) 
 
-        ## Append Results
-        #output_pred.append([y_test, pred_phm, pred_lasso, pred_pelasso, pred_avg_best, pred_csr, pred_psgd, pred_bssf])
-        #output_mse.append([mse_phm, mse_lasso, mse_pelasso, mse_avg_best, mse_csr, mse_psgd, mse_bssf])
-        #output_bestk.append([None, lasso_k, pelasso_k, avg_best_k, csr_k, psgd_k, bssf_k])
-        #output_weights.append(bssf_weights)
-        #output_cfmodels.append(cf_models)
-
         # Fill Results
         results["predictions"][rep_ind - 1] = [y_test, pred_phm, pred_lasso, pred_pelasso, pred_avg_best, pred_csr, pred_psgd, pred_bssf]
         results["mse"][rep_ind - 1] = [mse_phm, mse_lasso, mse_pelasso, mse_avg_best, mse_csr, mse_psgd, mse_bssf]
@@ -199,5 +191,4 @@ def run_results(N, x, y, train, cm_params, ran_st):
         results["cf_models"][rep_ind - 1] = cf_models
         results["cf_descriptions"] = cf_descriptions
 
-    #return output_pred, output_mse, output_bestk, output_weights, output_cfmodels, cf_descriptions, fmodel_names
     return results
