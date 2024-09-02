@@ -266,7 +266,7 @@ def sim_comb2(n, p, s, snr=1.0):
     return X, y, np.sort(non_zero_indices)
 
 ########
-def sim_data(sim_type, n, p, s=None, snr=1.0):
+def sim_data(sim_type, n, p, s=None, snr=1.0, ran_st=None):
     """
     Run the specified simulation.
 
@@ -276,12 +276,17 @@ def sim_data(sim_type, n, p, s=None, snr=1.0):
     p (int): Number of predictors
     s (int, optional): Number of non-zero coefficients (only for 'linear')
     snr (float): Signal-to-noise ratio
+    ran_st (int): Seed for random number generator
 
     Returns:
     X (np.ndarray): Design matrix of shape (n, p)
     y (np.ndarray): Response variable of shape (n,)
     indices (np.ndarray): Indices of non-zero coefficients or relevant predictors
     """
+    # Set seed
+    np.random.seed(ran_st)
+
+    # Run simulation
     if sim_type == 'linear':
         if s is None:
             raise ValueError("Parameter 's' must be provided for linear simulation.")

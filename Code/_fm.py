@@ -466,7 +466,7 @@ def pelasso_cv(y_train, cf_train, cf_pred, kfolds, n_jobs = 1):
 
 ### Best-Split-Selection
 # PSGD
-def psgd_cv(y_train, x_train, x_pred, n_models, split_grid, size_grid, kfolds, n_jobs = 1):
+def psgd_cv(y_train, x_train, x_pred, n_models, split_grid, size_grid, kfolds, ran_st = None, n_jobs = 1):
 
     """
     Best-Split-Selection (BSS) based on the PSGD algorithm.
@@ -482,12 +482,16 @@ def psgd_cv(y_train, x_train, x_pred, n_models, split_grid, size_grid, kfolds, n
         # Load the PSGD R package
         psgd = importr('PSGD')
 
+        # Set seed if provided
+        if ran_st is not None:
+            ro.r(f'set.seed({ran_st})')
+
         # Prepare data for R functions
         y_train_r = numpy2ri.py2rpy(y_train)
         x_train_r = numpy2ri.py2rpy(x_train)
         x_pred_r = numpy2ri.py2rpy(x_pred)
-        split_grid_r = numpy2ri.py2rpy(split_grid)
-        size_grid_r = numpy2ri.py2rpy(size_grid)
+        #split_grid_r = numpy2ri.py2rpy(split_grid)
+        #size_grid_r = numpy2ri.py2rpy(size_grid)
 
         # Ensure Y is a matrix
         y_train_r = ro.r.matrix(y_train_r, nrow=y_train.shape[0], ncol = 1)
@@ -500,10 +504,13 @@ def psgd_cv(y_train, x_train, x_pred, n_models, split_grid, size_grid, kfolds, n
         group_index = ro.IntVector(range(1, n_models + 1))
 
         # Fast-Best-Split-Selection
-        output = psgd.cv_PSGD(x = x_train_r, y = y_train_r, n_models = float(n_models),
-                              model_type = "Linear", include_intercept = True,
-                              split_grid = split_grid_r, size_grid = size_grid_r,
-                              max_iter = float(100), cycling_iter = float(0), n_folds = float(kfolds), n_threads = float(n_jobs))
+        output = psgd.cv_PSGD(
+            x = x_train_r, y = y_train_r, n_models = float(n_models),
+            model_type = "Linear", include_intercept = True,
+            split_grid = split_grid_r, size_grid = size_grid_r,
+            max_iter = float(100), cycling_iter = float(0),
+            n_folds = float(kfolds), n_threads = float(n_jobs)
+        )
 
         # Extract coefficients and make predictions
         psgd_coef = ro.r['coef'](output, group_index = group_index)
@@ -515,6 +522,7 @@ def psgd_cv(y_train, x_train, x_pred, n_models, split_grid, size_grid, kfolds, n
         psgd_coef = np.zeros(x_train.shape[1])
 
     finally:
+        # Deactivate numpy2ri
         numpy2ri.deactivate()
 
     return psgd_predictions, psgd_coef, np.sum(psgd_coef != 0)

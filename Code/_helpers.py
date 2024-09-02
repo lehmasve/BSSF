@@ -39,7 +39,7 @@ def relevant_predictor(models, weights):
 
 ############## ---------------------------
 # Function to split data
-def train_test_split(indices, train_size, x, y):
+def train_test_split(indices, train_size, x, y, ran_st=None):
     """
     Splits the data into training and test sets and prepares the corresponding subsets.
     
@@ -48,6 +48,7 @@ def train_test_split(indices, train_size, x, y):
     - train_size: Number of observations to include in the training set.
     - x: DataFrame of predictors.
     - y: Series or array of response variable.
+    - ran_st: Seed for random number generator.
     
     Returns:
     - x_train: Training set predictors.
@@ -55,6 +56,9 @@ def train_test_split(indices, train_size, x, y):
     - x_test: Test set predictors.
     - y_test: Test set response variable.
     """
+    # Set seed for reproducibility
+    np.random.seed(ran_st)
+
     # Randomly select indices for training set
     train_indices = np.random.choice(indices, train_size, replace=False)
 
@@ -64,7 +68,7 @@ def train_test_split(indices, train_size, x, y):
 
 ############## ---------------------------
 ### Function to generate results
-def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
+def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha):
     """
     Function for real data analysis simulation.
     
@@ -74,7 +78,6 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
     - y: Series or array of response variable.
     - train: Number of observations to include in the training set.
     - cm_params: List of tuples with the candidate models and their parameters.
-    - ran_st: Seed for random number generator 
     
     Returns:
     - output_pred: List of predictions for each model.
@@ -88,9 +91,6 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
 
     # Forecasting Model Names
     fmodel_names = ["PHM", "LASSO", "PELASSO", "AVG_BEST", "CSR", "PSGD", "BSSF"]
-
-    # Set seed for reproducibility
-    np.random.seed(ran_st)
 
     # Full Index
     indices = np.arange(0, x.shape[0])
@@ -110,10 +110,12 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
 
     ### Simulation replications
     for rep_ind in range(1, N + 1):
-        print(f"Iteration: {rep_ind}")
+
+        if N != 1:
+            print(f"Iteration: {rep_ind}")
 
         # Split Data
-        x_train, y_train, x_test, y_test = train_test_split(indices, train, x, y)
+        x_train, y_train, x_test, y_test = train_test_split(indices, train, x, y, rep_ind)
 
         # Check
         assert x_train.shape[0] == y_train.shape[0]
@@ -125,7 +127,7 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
         kfolds = train ### LOOCV
 
         # Candidate models -- Train
-        target_train, cf_train, lambda_vec = candidate_models_kf(y_train, x_train, kfolds, cm_params, ran_st = rep_ind, n_jobs = 5)
+        target_train, cf_train, lambda_vec = candidate_models_kf(y_train, x_train, kfolds, cm_params, rep_ind, n_jobs = 5)
 
         # Candidate models -- Test
         cf_models, cf_test, cf_descriptions = candidate_models(y_train, x_train, x_test, cm_params, lambda_vec)
@@ -152,25 +154,25 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
 
         # Best Average
         vec_k = np.array([1, 2, 3, 4, 5])
-        pred_avg_best, avg_best_k = avg_best_cv(target_train, cf_train, cf_test, vec_k, kfolds, ran_st = rep_ind, n_jobs = 1)
+        pred_avg_best, avg_best_k = avg_best_cv(target_train, cf_train, cf_test, vec_k, kfolds, rep_ind, n_jobs = 1)
 
         # Complete Subset Regression
         vec_k = np.arange(1, 10)
         sampling = True
-        pred_csr, csr_k = csr_cv(y_train, x_train, x_test, vec_k, sampling, kfolds, ran_st = rep_ind, n_jobs = 4)
+        pred_csr, csr_k = csr_cv(y_train, x_train, x_test, vec_k, sampling, kfolds, rep_ind, n_jobs = 4)
      
         # Fast-Best-Split-Selection - Simple Signals
         n_models = 5
         split_grid = np.array([1, 2, 3, 4, 5])
         size_grid = np.array([9, 12, 15]) # np.floor(np.array([0.3 * x_train.shape[0], 0.4 * x_train.shape[0], 0.5 * x_train.shape[0]]))
-        pred_psgd, psgd_coef, psgd_k = psgd_cv(y_train, x_train, x_test, n_models, split_grid, size_grid, kfolds, n_jobs = 4)
+        pred_psgd, psgd_coef, psgd_k = psgd_cv(y_train, x_train, x_test, n_models, split_grid, size_grid, kfolds, rep_ind, n_jobs = 4)
 
         # BSSF
         alpha = bssf_alpha # 1e9
         vec_k = np.array([1, 2, 3, 4, 5])
         timeout = bssf_timeout # 10
         method = "gurobi"
-        pred_bssf, bssf_weights, bssf_k = bssf_cv(target_train, cf_train, cf_test, alpha, vec_k, timeout, method, kfolds, ran_st = rep_ind)
+        pred_bssf, bssf_weights, bssf_k = bssf_cv(target_train, cf_train, cf_test, alpha, vec_k, timeout, method, kfolds, rep_ind)
 
         ### Evaluation
         # Mean-Squared Error
@@ -181,7 +183,7 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha, ran_st):
         mse_avg_best = mean_squared_error(y_test, pred_avg_best)
         mse_csr = mean_squared_error(y_test, pred_csr)
         mse_psgd = mean_squared_error(y_test, pred_psgd)
-        mse_bssf = mean_squared_error(y_test, pred_bssf) 
+        mse_bssf = mean_squared_error(y_test, pred_bssf)
 
         # Fill Results
         results["predictions"][rep_ind - 1] = [y_test, pred_phm, pred_lasso, pred_pelasso, pred_avg_best, pred_csr, pred_psgd, pred_bssf]
