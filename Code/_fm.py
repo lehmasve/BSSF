@@ -2,7 +2,7 @@
 # Import
 import os
 import numpy as np
-import gurobipy as gp
+
 from joblib import Parallel, delayed
 from itertools import combinations
 
@@ -24,7 +24,9 @@ import warnings
 from sklearn.exceptions import ConvergenceWarning
 warnings.filterwarnings(action='ignore', category=ConvergenceWarning)
 
-#gp.setParam('OutputFlag', 0)
+import gurobipy as gp
+gp.setParam('OutputFlag', 0)
+
 if os.name == 'nt':
     import dill
     dill.settings['recurse'] = True
@@ -64,13 +66,13 @@ def bssf(y_train, cf_train, cf_pred, alpha, k, timeout, method):
         raise ValueError("Invalid method. Choose from 'dwave', 'gurobi', 'qcbo'.")
 
     # Adapt X-Matrix
-    cf_train = cf_train / k
-    cf_pred  = cf_pred  / k
+    cf_train /= k
+    cf_pred /= k
 
     # Generate Q-Matrix
-    i_mat   = np.outer(np.ones(cf_train.shape[1]), np.ones(cf_train.shape[1]))
-    aux_mat = np.array(y_train.transpose() @ cf_train + alpha * k)
-    Q       = - 2 * np.diag(aux_mat) + cf_train.transpose() @ cf_train + alpha * i_mat
+    i_mat = np.ones((cf_train.shape[1], cf_train.shape[1]))
+    aux_mat = y_train.T @ cf_train + alpha * k
+    Q = - 2 * np.diag(aux_mat) + cf_train.T @ cf_train + alpha * i_mat
 
     # Optimization based on method
     if method == "dwave":
@@ -85,14 +87,13 @@ def bssf(y_train, cf_train, cf_pred, alpha, k, timeout, method):
         print(f"Warning: Number of selected features does not match --- {np.sum(solution)} instead of {k}!")
 
     # Prediction
-    pred = solution @ cf_pred.transpose()
+    pred = solution @ cf_pred.T
 
     return pred, solution
 
 # Optimation Function -- DWave
 def _solve_dwave(Q, timeout):
-    bqm = BinaryQuadraticModel('BINARY')
-    bqm = bqm.from_qubo(Q)
+    bqm = BinaryQuadraticModel('BINARY').from_qubo(Q)
     bqm.normalize()
     solver_qpu = SimulatedAnnealingSampler()
     #solver_qpu = SteepestDescentSolver()
@@ -102,7 +103,9 @@ def _solve_dwave(Q, timeout):
 # Optimation Function -- Gurobi QUBO
 def _solve_qubo(Q, timeout):
     model = gp.Model()
+    model.Params.OutputFlag = 0
     model.Params.TimeLimit = timeout
+    model.Params.Threads = 1
     b = model.addMVar(shape=Q.shape[0], vtype=gp.GRB.BINARY, name="b")
     model.setObjective(b @ Q @ b, gp.GRB.MINIMIZE)
     model.optimize()
@@ -111,7 +114,9 @@ def _solve_qubo(Q, timeout):
 # Optimation Function -- Gubrobi QCBO
 def _solve_qcbo(cf_train, y_train, k, timeout):
     model = gp.Model()
+    model.Params.OutputFlag = 0
     model.params.timelimit = timeout
+    model.Params.Threads = 1
     b = model.addMVar(shape=cf_train.shape[1], vtype=gp.GRB.BINARY, name="b")
     norm_0 = model.addVar(lb=k, ub=k, name="norm")
     model.setObjective(b.T @ cf_train.T @ cf_train @ b - 2 * y_train.T @ cf_train @ b + np.dot(y_train, y_train), gp.GRB.MINIMIZE)
@@ -120,7 +125,7 @@ def _solve_qcbo(cf_train, y_train, k, timeout):
     return np.array(model.x)[:-1]
 
 # BSSF with Cross-Validation for k
-def bssf_cv(y_train, cf_train, cf_pred, alpha, vec_k, timeout, method, kfolds, ran_st):
+def bssf_cv(y_train, cf_train, cf_pred, alpha, vec_k, timeout, method, kfolds, ran_st, n_jobs = 1):
 
     """
     Best Subset Selection of Forecasts (BSSF) with k-fold cross-validation for selecting k.
@@ -135,36 +140,37 @@ def bssf_cv(y_train, cf_train, cf_pred, alpha, vec_k, timeout, method, kfolds, r
     - method: Optimization method to use ('dwave', 'qubo', 'qcbo').
     - kfolds: Number of folds for cross-validation.
     - ran_st: Random state for cross-validation.
+    - n_jobs: Number of jobs to run in parallel.
 
     Returns:
     Tuple of prediction and solution vector with the best k.
     """
 
-    # Initialize
-    kf = KFold(n_splits = kfolds, shuffle = True, random_state = ran_st)
-    best_k = None
-    best_score = float('inf')
-
-    for k in vec_k:
+    def _predict(y_train, cf_train, alpha, k, timeout, method, kf):
         scores = []
         for train_index, test_index in kf.split(cf_train):
             cf_train_fold, cf_train_val = cf_train[train_index], cf_train[test_index]
             y_train_fold, y_train_val = y_train[train_index], y_train[test_index]
 
-            # Adjust the function call to include cross-validation fold data
-            pred, solution = bssf(y_train_fold, cf_train_fold, cf_train_val, alpha, k, timeout, method)
+            pred, _ = bssf(y_train_fold, cf_train_fold, cf_train_val, alpha, k, timeout, method)
             score = mean_squared_error(y_train_val, pred)
             scores.append(score)
 
         avg_score = np.mean(scores)
-        if avg_score < best_score:
-            best_score = avg_score
-            best_k = np.sum(solution)
+        return k, avg_score
+
+    # Initialize
+    kf = KFold(n_splits = kfolds, shuffle = True, random_state = ran_st)
+
+    # Parallelize the cross-validation for each k
+    results = Parallel(n_jobs = n_jobs)(delayed(_predict)(y_train, cf_train, alpha, k, timeout, method, kf) for k in vec_k)
+
+    # Find the best k and its score
+    best_k, _ = min(results, key=lambda x: x[1])
 
     # Train final model with the best k
     final_pred, final_solution = bssf(y_train, cf_train, cf_pred, alpha, best_k, timeout, method)
     return final_pred, final_solution, best_k
-
 
 ### Complete Subset Regression
 # Complete Subset Regression
@@ -202,7 +208,7 @@ def csr(y_train, x_train, x_pred, k, sampling):
         for comb in combinations(indices, k):
             model = LinearRegression().fit(x_train[:, comb], y_train)
             pred_csr.append(model.predict(x_pred[:, comb]))
-    if sampling:
+    elif sampling:
         for u in range(upper_bound):
             np.random.seed(u)
             comb = tuple(np.random.choice(indices, k, replace = False))
@@ -622,3 +628,49 @@ def psgd_cv(y_train, x_train, x_pred, n_models, split_grid, size_grid, kfolds, r
 #     # Train final model with the best k
 #     final_pred = avg_best(y_train, cf_train, cf_pred, best_k)
 #     return final_pred, best_k
+#
+## BSSF with Cross-Validation for k
+#def bssf_cv(y_train, cf_train, cf_pred, alpha, vec_k, timeout, method, kfolds, ran_st):
+#
+#    """
+#    Best Subset Selection of Forecasts (BSSF) with k-fold cross-validation for selecting k.
+#
+#    Parameters:
+#    - y_train: Training data targets.
+#    - cf_train: Candidate Model Prediction matrix for training.
+#    - cf_pred: Candidate Model Prediction matrix for prediction.
+#    - alpha: Regularization parameter.
+#    - vec_k: List of values for k to cross-validate.
+#    - timeout: Timeout for optimization models.
+#    - method: Optimization method to use ('dwave', 'qubo', 'qcbo').
+#    - kfolds: Number of folds for cross-validation.
+#    - ran_st: Random state for cross-validation.
+#
+#    Returns:
+#    Tuple of prediction and solution vector with the best k.
+#    """
+#
+#    # Initialize
+#    kf = KFold(n_splits = kfolds, shuffle = True, random_state = ran_st)
+#    best_k = None
+#    best_score = float('inf')
+#
+#    for k in vec_k:
+#        scores = []
+#        for train_index, test_index in kf.split(cf_train):
+#            cf_train_fold, cf_train_val = cf_train[train_index], cf_train[test_index]
+#            y_train_fold, y_train_val = y_train[train_index], y_train[test_index]
+#
+#            # Adjust the function call to include cross-validation fold data
+#            pred, solution = bssf(y_train_fold, cf_train_fold, cf_train_val, alpha, k, timeout, method)
+#            score = mean_squared_error(y_train_val, pred)
+#            scores.append(score)
+#
+#        avg_score = np.mean(scores)
+#        if avg_score < best_score:
+#            best_score = avg_score
+#            best_k = np.sum(solution)
+#
+#    # Train final model with the best k
+#    final_pred, final_solution = bssf(y_train, cf_train, cf_pred, alpha, best_k, timeout, method)
+#    return final_pred, final_solution, best_k

@@ -290,8 +290,8 @@ def dtr(y_train, x_train, x_pred, vec_depth, n_jobs=1):
                                       splitter = "best",
                                       max_depth = max_depth,
                                       max_features = None,
-                                      min_samples_split = 15,
-                                      min_samples_leaf = 5,
+                                      min_samples_split = 12,
+                                      min_samples_leaf = 4,
                                       random_state = 42)
         model.fit(x_train, y_train)
         return model, model.predict(x_pred)
@@ -389,7 +389,7 @@ def candidate_models(y_train, x_train, x_pred, models_params, lambda_vec):
 
     # Initialize list to store predictions
     all_predictions = []
-    all_models = [] # dict()
+    all_models = []
     all_descriptions = []
 
     # Loop over Models and Parameters

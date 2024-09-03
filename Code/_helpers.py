@@ -39,12 +39,11 @@ def relevant_predictor(models, weights):
 
 ############## ---------------------------
 # Function to split data
-def train_test_split(indices, train_size, x, y, ran_st=None):
+def train_test_split(train_size, x, y, ran_st=None):
     """
     Splits the data into training and test sets and prepares the corresponding subsets.
     
     Parameters:
-    - indices: Array of indices to split.
     - train_size: Number of observations to include in the training set.
     - x: DataFrame of predictors.
     - y: Series or array of response variable.
@@ -59,6 +58,9 @@ def train_test_split(indices, train_size, x, y, ran_st=None):
     # Set seed for reproducibility
     np.random.seed(ran_st)
 
+    # Full-Sample-Indices
+    indices = np.arange(0, y.shape[0])
+
     # Randomly select indices for training set
     train_indices = np.random.choice(indices, train_size, replace=False)
 
@@ -68,7 +70,7 @@ def train_test_split(indices, train_size, x, y, ran_st=None):
 
 ############## ---------------------------
 ### Function to generate results
-def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha):
+def run_results(N, x, y, train, cm_params, bssf_timeout, n_threads):
     """
     Function for real data analysis simulation.
     
@@ -78,6 +80,8 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha):
     - y: Series or array of response variable.
     - train: Number of observations to include in the training set.
     - cm_params: List of tuples with the candidate models and their parameters.
+    - bssf_timeout: Timeout for BSSF model.
+    - n_threads: Number of threads to use.
     
     Returns:
     - output_pred: List of predictions for each model.
@@ -92,11 +96,9 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha):
     # Forecasting Model Names
     fmodel_names = ["PHM", "LASSO", "PELASSO", "AVG_BEST", "CSR", "PSGD", "BSSF"]
 
-    # Full Index
-    indices = np.arange(0, x.shape[0])
-
     # Initialize results dictionary
     results = {
+        "y_test": [None] * N,
         "predictions": [None] * N,
         "mse": [None] * N,
         "best_k": [None] * N,
@@ -104,75 +106,75 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha):
         "cf_models": [None] * N,
         "cf_descriptions": None,
         "fmodel_names": fmodel_names,
-        "bssf_timeout": bssf_timeout,
-        "bssf_alpha": bssf_alpha
+        "bssf_alpha": [None] * N,
+        "bssf_timeout": bssf_timeout
     }
 
-    ### Simulation replications
-    for rep_ind in range(1, N + 1):
+    ### Re-Sampling
+    for r in range(1, N + 1):
 
         if N != 1:
-            print(f"Iteration: {rep_ind}")
+            print(f"Iteration: {r}")
 
         # Split Data
-        x_train, y_train, x_test, y_test = train_test_split(indices, train, x, y, rep_ind)
+        x_train, y_train, x_test, y_test = train_test_split(train, x, y, r)
 
         # Check
+        assert x_train.shape[0] == train
         assert x_train.shape[0] == y_train.shape[0]
         assert x_test.shape[0] == y_test.shape[0]
-        assert x_train.shape[0] == train
 
         ### Candidate Models
         lambda_vec = None
-        kfolds = train ### LOOCV
+        kfolds = train ### -> LOOCV
 
         # Candidate models -- Train
-        target_train, cf_train, lambda_vec = candidate_models_kf(y_train, x_train, kfolds, cm_params, rep_ind, n_jobs = 5)
+        target_train, cf_train, lambda_vec = candidate_models_kf(y_train, x_train, kfolds, cm_params, r, n_threads)
 
         # Candidate models -- Test
         cf_models, cf_test, cf_descriptions = candidate_models(y_train, x_train, x_test, cm_params, lambda_vec)
 
         # Check
+        assert cf_train.shape[0] == train
         assert cf_train.shape[0] == x_train.shape[0]
         assert cf_test.shape[0] == x_test.shape[0]
-        assert cf_train.shape[0] == train
 
-        ### Benchmark Methods
-        kfolds = 5
+        ### Forecasting Methods
+        kfolds = 10
 
         # PHM
         pred_phm = np.full(y_test.shape[0], target_train.mean())
 
         ## Forward Stepwise Regression
-        #pred_fss, fss_k = fss_cv(y_train, x_train, x_test, kfolds, n_jobs = 4)
-        
+        #pred_fss, fss_k = fss_cv(y_train, x_train, x_test, kfolds, n_threads)
+
         # Lasso
-        pred_lasso, lasso_coef, lasso_k = lasso_cv(y_train, x_train, x_test, kfolds, n_jobs = 4)
+        pred_lasso, lasso_coef, lasso_k = lasso_cv(y_train, x_train, x_test, kfolds, n_threads)
 
         # peLasso
-        pred_pelasso, pelasso_coef, pelasso_k = pelasso_cv(target_train, cf_train, cf_test, kfolds, n_jobs = 4)
+        pred_pelasso, pelasso_coef, pelasso_k = pelasso_cv(target_train, cf_train, cf_test, kfolds, n_threads)
 
         # Best Average
         vec_k = np.array([1, 2, 3, 4, 5])
-        pred_avg_best, avg_best_k = avg_best_cv(target_train, cf_train, cf_test, vec_k, kfolds, rep_ind, n_jobs = 1)
+        pred_avg_best, avg_best_k = avg_best_cv(target_train, cf_train, cf_test, vec_k, kfolds, r, n_threads)
 
         # Complete Subset Regression
         vec_k = np.arange(1, 10)
         sampling = True
-        pred_csr, csr_k = csr_cv(y_train, x_train, x_test, vec_k, sampling, kfolds, rep_ind, n_jobs = 4)
-     
+        pred_csr, csr_k = csr_cv(y_train, x_train, x_test, vec_k, sampling, kfolds, r, n_threads)
+
         # Fast-Best-Split-Selection - Simple Signals
         n_models = 5
         split_grid = np.array([1, 2, 3, 4, 5])
         size_grid = np.array([9, 12, 15]) # np.floor(np.array([0.3 * x_train.shape[0], 0.4 * x_train.shape[0], 0.5 * x_train.shape[0]]))
-        pred_psgd, psgd_coef, psgd_k = psgd_cv(y_train, x_train, x_test, n_models, split_grid, size_grid, kfolds, rep_ind, n_jobs = 4)
+        pred_psgd, psgd_coef, psgd_k = psgd_cv(y_train, x_train, x_test, n_models, split_grid, size_grid, kfolds, r, n_threads)
 
         # BSSF
-        alpha = bssf_alpha # 1e9
         vec_k = np.array([1, 2, 3, 4, 5])
+        alpha = max(0.01, np.round(np.max(vec_k) * np.var(target_train), 1)) # bssf_alpha # 1e9
         timeout = bssf_timeout # 10
         method = "gurobi"
-        pred_bssf, bssf_weights, bssf_k = bssf_cv(target_train, cf_train, cf_test, alpha, vec_k, timeout, method, kfolds, rep_ind)
+        pred_bssf, bssf_weights, bssf_k = bssf_cv(target_train, cf_train, cf_test, alpha, vec_k, timeout, method, kfolds, r, n_threads)
 
         ### Evaluation
         # Mean-Squared Error
@@ -186,11 +188,13 @@ def run_results(N, x, y, train, cm_params, bssf_timeout, bssf_alpha):
         mse_bssf = mean_squared_error(y_test, pred_bssf)
 
         # Fill Results
-        results["predictions"][rep_ind - 1] = [y_test, pred_phm, pred_lasso, pred_pelasso, pred_avg_best, pred_csr, pred_psgd, pred_bssf]
-        results["mse"][rep_ind - 1] = [mse_phm, mse_lasso, mse_pelasso, mse_avg_best, mse_csr, mse_psgd, mse_bssf]
-        results["best_k"][rep_ind - 1] = [None, lasso_k, pelasso_k, avg_best_k, csr_k, psgd_k, bssf_k]
-        results["bssf_weights"][rep_ind - 1] = bssf_weights
-        results["cf_models"][rep_ind - 1] = cf_models
+        results["y_test"][r - 1] = y_test
+        results["predictions"][r - 1] = [y_test, pred_phm, pred_lasso, pred_pelasso, pred_avg_best, pred_csr, pred_psgd, pred_bssf]
+        results["mse"][r - 1] = [mse_phm, mse_lasso, mse_pelasso, mse_avg_best, mse_csr, mse_psgd, mse_bssf]
+        results["best_k"][r - 1] = [None, lasso_k, pelasso_k, avg_best_k, csr_k, psgd_k, bssf_k]
+        results["bssf_weights"][r - 1] = bssf_weights
+        results["cf_models"][r - 1] = cf_models
         results["cf_descriptions"] = cf_descriptions
+        results["bssf_alpha"][r - 1] = alpha
 
     return results
